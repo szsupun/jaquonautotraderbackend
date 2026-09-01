@@ -41,6 +41,7 @@ from permissions_store import (
     subscription_status,
     subscription_status_bulk_both,
 )
+from insights import compute_insights
 from profile_store import display_names_bulk, load_profiles_bulk
 from session_history_store import load_session_history, load_session_history_bulk
 from session_manager import SessionManager
@@ -396,6 +397,21 @@ def create_app(manager: SessionManager) -> FastAPI:
         tab's expandable session cards render."""
         history = await asyncio.to_thread(load_session_history, user["id"])
         return {"sessions": history[:limit]}
+
+    def _insights_sync() -> dict:
+        all_trades = []
+        for sessions in load_session_history_bulk(list_user_ids()).values():
+            for sess in sessions:
+                all_trades.extend(sess.get("trades", []))
+        return compute_insights(all_trades)
+
+    @app.get("/api/insights")
+    async def insights(user=Depends(require_user)):
+        """Platform-wide (every user, demo+real combined) win-rate patterns
+        by pair/hour/day/martingale-step — powers the Insights tab. Every
+        customer sees the same aggregate numbers; nothing here is scoped to
+        or reveals any individual user's data."""
+        return await asyncio.to_thread(_insights_sync)
 
     @app.get("/api/health")
     async def health():
