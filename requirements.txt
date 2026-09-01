@@ -1,0 +1,44 @@
+# Auto Trader Bot Dependencies
+
+# PocketOption Trading - ChipaDevTeam BinaryOptionsTools-v2
+# Windows: pip install binaryoptionstoolsv2
+# Ubuntu/Linux: pip install "https://github.com/ChipaDevTeam/BinaryOptionsTools-v2/releases/download/v0.2.8/binaryoptionstoolsv2-0.2.8-cp39-abi3-manylinux_2_28_x86_64.whl"
+
+# Telegram bot (aiogram 3)
+aiogram>=3.0,<4
+
+
+# AI Signal Bot Dependencies
+# BinaryOptionsTools-v2: https://github.com/ChipaDevTeam/BinaryOptionsTools-v2
+
+# PocketOption Trading - ChipaDevTeam BinaryOptionsTools-v2
+binaryoptionstoolsv2
+
+# HTTP clients
+aiohttp>=3.9.0
+httpx>=0.25.0
+
+# Telegram bot (aiogram 3)
+aiogram>=3.0,<4
+
+
+# Data processing
+pandas>=2.0.0
+numpy>=1.24.0
+
+# Async utilities
+asyncio-throttle>=1.0.2
+
+# Logging and utilities
+python-dotenv>=1.0.0
+
+# Date/time handling
+pytz>=2023.3
+
+# Mini App backend (Telegram WebApp UI)
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+pydantic>=2.0.0
+
+# Database (per-user settings, permissions, profiles, session history)
+pymongo>=4.6.0
