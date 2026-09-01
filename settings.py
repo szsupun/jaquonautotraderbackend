@@ -29,6 +29,14 @@ class TradingSettings:
     demo_ssid: str = ""
     real_ssid: str = ""
 
+    # Has this user clicked through the real-money risk disclosure at least
+    # once? Required before a real_ssid can be saved or REAL-mode trading
+    # started — see /api/risk-ack in server.py. Keeps a timestamp so there's
+    # an actual record of when a customer accepted the risk, not just a
+    # bare flag.
+    real_risk_ack: bool = False
+    real_risk_ack_at: Optional[str] = None
+
     # ── Trading ──────────────────────────────────────────────────────────
     asset: str = "EURUSD_otc"
     direction: str = "AUTO"  # "AUTO" | "CALL" | "PUT"

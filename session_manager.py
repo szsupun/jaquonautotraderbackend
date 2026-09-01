@@ -43,6 +43,7 @@ from config import (
 )
 from candle_timing import seconds_until_next_candle
 from connect_limit_store import check_and_record_session_start
+from error_messages import humanize_error
 from risk_manager import RiskManager
 from session_history_store import append_session
 from settings import TradingSettings
@@ -67,6 +68,9 @@ class UserSession:
     next_trade_at: Optional[datetime] = None  # for the frontend's live countdown
     task: Optional[asyncio.Task] = None
     last_error: Optional[str] = None
+    # Raw exception text (type + message) behind a customer-friendly
+    # last_error — admin-panel only, never shown to the customer directly.
+    last_error_detail: Optional[str] = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     # Live event feed for the Mini App's Terminal tab — bounded so a long
     # session can't grow this unbounded.
@@ -153,6 +157,7 @@ class SessionManager:
                 "connecting": s.connecting,
                 "connected": s.trader.is_connected,
                 "last_error": s.last_error,
+                "last_error_detail": s.last_error_detail,
                 "session_profit": summary["session_profit"],
                 "session_trades": summary["session_trades"],
                 "win_rate": summary["win_rate"],
@@ -191,6 +196,7 @@ class SessionManager:
             raise RuntimeError(limit_reason)
         session.trading_active = True
         session.last_error = None
+        session.last_error_detail = None
         session.live_step_pnl = 0.0
         session.risk_manager.reset()
         session.trader.is_connected = False  # force reconnect w/ current SSID
@@ -305,6 +311,7 @@ class SessionManager:
                             await self._dm(user_id, f"⏹️ Trading stopped: {connect_reason}")
                             break
                         session.last_error = None
+                        session.last_error_detail = None
 
                     balance = await trader.get_balance()
                     if balance is None:
@@ -509,18 +516,22 @@ class SessionManager:
                     raise
                 except Exception as e:
                     consecutive_errors += 1
-                    session.last_error = str(e)
+                    friendly = humanize_error(e)
+                    session.last_error = friendly
+                    session.last_error_detail = f"{type(e).__name__}: {e}"
                     logger.error(f"[user {user_id}] Trading loop error: {e}")
                     logger.error(traceback.format_exc())
-                    self._tlog(session, f"Error: {e}", "error")
+                    self._tlog(session, friendly, "error")
 
                     if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
                         logger.error(
                             f"[user {user_id}] {consecutive_errors} consecutive errors — "
                             "stopping this user's session."
                         )
-                        self._tlog(session, f"{consecutive_errors} consecutive errors — stopped", "error")
+                        stop_msg = "Stopped after repeated issues — your funds and settings are safe. Press Start to try again."
+                        self._tlog(session, stop_msg, "error")
                         session.trading_active = False
+                        await self._dm(user_id, f"⏹️ Trading stopped: {stop_msg}")
                         break
 
                     wait = min(30 * (2 ** min(consecutive_errors - 1, 3)), 120)

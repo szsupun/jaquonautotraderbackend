@@ -18,6 +18,7 @@ import logging
 import os
 import re
 from dataclasses import asdict
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from fastapi import Depends, FastAPI, HTTPException
@@ -245,6 +246,11 @@ def create_app(manager: SessionManager) -> FastAPI:
                     403,
                     "Real-money trading isn't enabled for your account yet — ask an admin to turn it on.",
                 )
+            if not session.settings.real_risk_ack:
+                raise HTTPException(
+                    403,
+                    "Please review and accept the real-money risk disclosure first (shown when you switch to Real mode).",
+                )
 
         for key, value in updates.items():
             setattr(session.settings, key, value)
@@ -266,6 +272,22 @@ def create_app(manager: SessionManager) -> FastAPI:
         if not updates:
             raise HTTPException(400, "No fields to update")
         return await asyncio.to_thread(_update_settings_sync, session, user["id"], updates)
+
+    def _risk_ack_sync(session, user_id: int) -> Dict[str, Any]:
+        session.settings.real_risk_ack = True
+        session.settings.real_risk_ack_at = datetime.now(timezone.utc).isoformat()
+        manager.save_settings(user_id)
+        return _settings_dict(session, user_id)
+
+    @app.post("/api/risk-ack")
+    async def risk_ack(user=Depends(require_user)):
+        """Records that this user has clicked through the real-money risk
+        disclosure — required once before a real_ssid can be saved or
+        REAL-mode trading started (see the checks in _update_settings_sync
+        and _check_start_permissions_sync). The frontend shows the actual
+        disclosure text and only calls this after the customer accepts it."""
+        session = manager.get_or_create(user["id"])
+        return await asyncio.to_thread(_risk_ack_sync, session, user["id"])
 
     @app.get("/api/assets")
     async def assets(user=Depends(require_user)):
@@ -303,6 +325,11 @@ def create_app(manager: SessionManager) -> FastAPI:
             raise HTTPException(
                 403,
                 "Real-money trading isn't enabled for your account yet — ask an admin to turn it on.",
+            )
+        if session.settings.account_mode == "REAL" and not session.settings.real_risk_ack:
+            raise HTTPException(
+                403,
+                "Please review and accept the real-money risk disclosure first (shown when you switch to Real mode).",
             )
         if session.settings.account_mode == "DEMO" and not is_demo_trading_enabled(user_id):
             raise HTTPException(

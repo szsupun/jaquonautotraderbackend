@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from typing import Dict, List
 
+from crypto_util import decrypt_ssid, encrypt_ssid
 from db import get_db
 from settings import TradingSettings
 
@@ -24,11 +25,17 @@ def load_user_settings(user_id: int) -> TradingSettings:
         settings = TradingSettings()
         save_user_settings(user_id, settings)
         return settings
-    return TradingSettings.from_dict(doc)
+    settings = TradingSettings.from_dict(doc)
+    settings.demo_ssid = decrypt_ssid(settings.demo_ssid)
+    settings.real_ssid = decrypt_ssid(settings.real_ssid)
+    return settings
 
 
 def save_user_settings(user_id: int, settings: TradingSettings) -> None:
-    _users.replace_one({"_id": user_id}, {"_id": user_id, **settings.to_dict()}, upsert=True)
+    data = settings.to_dict()
+    data["demo_ssid"] = encrypt_ssid(data["demo_ssid"])
+    data["real_ssid"] = encrypt_ssid(data["real_ssid"])
+    _users.replace_one({"_id": user_id}, {"_id": user_id, **data}, upsert=True)
 
 
 def list_user_ids() -> List[int]:
@@ -43,5 +50,8 @@ def load_user_settings_bulk(user_ids: List[int]) -> Dict[int, TradingSettings]:
     result: Dict[int, TradingSettings] = {}
     for doc in _users.find({"_id": {"$in": user_ids}}):
         uid = doc.pop("_id")
-        result[uid] = TradingSettings.from_dict(doc)
+        settings = TradingSettings.from_dict(doc)
+        settings.demo_ssid = decrypt_ssid(settings.demo_ssid)
+        settings.real_ssid = decrypt_ssid(settings.real_ssid)
+        result[uid] = settings
     return result
