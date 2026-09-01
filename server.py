@@ -124,7 +124,11 @@ class BroadcastRequest(BaseModel):
 
 
 def create_app(manager: SessionManager) -> FastAPI:
-    app = FastAPI(title="Auto Trader Mini App API", version="2.0.0")
+    # docs_url/redoc_url/openapi_url disabled: FastAPI serves these
+    # publicly by default, which hands anyone who finds this server a full
+    # map of every endpoint (including admin routes) and its parameters —
+    # pure reconnaissance for an attacker, no reason to expose it.
+    app = FastAPI(title="Auto Trader Mini App API", version="2.0.0", docs_url=None, redoc_url=None, openapi_url=None)
 
     app.add_middleware(
         CORSMiddleware,
