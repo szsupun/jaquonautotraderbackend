@@ -25,7 +25,6 @@ from typing import Any, Dict, Optional
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -445,24 +444,28 @@ def create_app(manager: SessionManager) -> FastAPI:
             ])
         return buf.getvalue()
 
-    @app.get("/api/history/export.csv")
+    @app.post("/api/history/export")
     async def export_history_csv(user=Depends(require_user)):
         """Full trade history (current live session + every archived
-        session) as a downloadable CSV. Opened via Telegram's openLink()
-        into the system browser rather than fetched in-app — a blob-based
-        client-side download doesn't reliably trigger inside Telegram's own
-        WebView, but a plain GET with Content-Disposition: attachment does
-        in a real browser. That's also why auth here can come from the
-        init_data query param (see require_user) instead of only the
-        header: openLink() can't attach custom headers."""
+        session), sent as a Telegram document straight into the customer's
+        own chat with the bot — not a downloadable link. A link opened in
+        the system browser would show the customer this server's real
+        address (see the sslip.io / IP-exposure issue); a bot-delivered
+        file needs no public URL and never leaves Telegram's own
+        infrastructure."""
         session = manager.get_or_create(user["id"])
         csv_text = await asyncio.to_thread(_export_csv_sync, session, user["id"])
         filename = f"trade-history-{datetime.now(timezone.utc).date().isoformat()}.csv"
-        return Response(
-            content=csv_text,
-            media_type="text/csv",
-            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        sent = await manager.send_document(
+            user["id"], filename, csv_text.encode("utf-8"),
+            caption="📄 Your trade history export.",
         )
+        if not sent:
+            raise HTTPException(
+                502,
+                "Couldn't send the file — open a chat with the bot first (send it /start), then try again.",
+            )
+        return {"sent": True}
 
     def _insights_sync() -> dict:
         all_trades = []

@@ -34,6 +34,7 @@ from typing import Deque, Dict, Optional, Tuple
 
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramAPIError
+from aiogram.types import BufferedInputFile
 
 from config import (
     ASSET_LOAD_WAIT_SECONDS,
@@ -112,6 +113,26 @@ class SessionManager:
             await self._bot.send_message(chat_id=user_id, text=text, parse_mode=ParseMode.HTML)
         except TelegramAPIError as e:
             logger.warning(f"[user {user_id}] DM failed: {e}")
+
+    async def send_document(self, user_id: int, filename: str, content: bytes, caption: str = "") -> bool:
+        """Send a file straight into the user's own chat with the bot —
+        used for CSV export. Deliberately not a downloadable link: a link
+        opened in the system browser exposes this server's real address to
+        the customer (see the sslip.io discussion), while a bot-delivered
+        document never leaves Telegram's own infrastructure and needs no
+        public URL at all. Returns whether it actually sent."""
+        if not self._bot:
+            return False
+        try:
+            await self._bot.send_document(
+                chat_id=user_id,
+                document=BufferedInputFile(content, filename=filename),
+                caption=caption,
+            )
+            return True
+        except TelegramAPIError as e:
+            logger.warning(f"[user {user_id}] send_document failed: {e}")
+            return False
 
     async def broadcast(self, user_ids: list, text: str) -> int:
         """Admin broadcast — DM every given user id, best-effort. Returns how

@@ -19,7 +19,7 @@ import time
 from typing import Optional
 from urllib.parse import parse_qsl
 
-from fastapi import Header, HTTPException, Query, Request
+from fastapi import Header, HTTPException, Request
 
 from config import ALLOWED_USER_IDS, DEV_BYPASS_AUTH, TELEGRAM_ADMIN_IDS, TELEGRAM_BOT_TOKEN
 from profile_store import save_profile
@@ -120,7 +120,6 @@ async def require_admin(
 async def require_user(
     request: Request,
     x_telegram_init_data: str = Header(default=""),
-    init_data_qs: str = Query(default="", alias="init_data"),
 ) -> dict:
     """
     FastAPI dependency: allow any verified Telegram user (or localhost dev).
@@ -128,16 +127,8 @@ async def require_user(
     Each caller gets identified by their own Telegram id — that id is what
     session_manager.py uses to key each user's isolated trading session.
     If ALLOWED_USER_IDS is non-empty, only those ids may pass (private beta).
-
-    initData normally arrives as the X-Telegram-Init-Data header (every
-    api() fetch call in app.js sets it). The one exception is the CSV
-    export link, which Telegram opens in the system browser via
-    openLink() rather than fetching in-app — that context can't set
-    custom headers, so the same initData travels as a ?init_data= query
-    param there instead. Either is accepted here so every other endpoint
-    keeps working exactly as before.
     """
-    user = verify_init_data(x_telegram_init_data or init_data_qs, TELEGRAM_BOT_TOKEN)
+    user = verify_init_data(x_telegram_init_data, TELEGRAM_BOT_TOKEN)
 
     if user is None:
         if _is_local(request):
