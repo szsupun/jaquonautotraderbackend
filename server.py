@@ -14,6 +14,8 @@ Serves JSON only — the frontend (in ../frontend) is deployed separately
 from __future__ import annotations
 
 import asyncio
+import csv
+import io
 import logging
 import os
 import re
@@ -23,6 +25,7 @@ from typing import Any, Dict, Optional
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -397,6 +400,65 @@ def create_app(manager: SessionManager) -> FastAPI:
         tab's expandable session cards render."""
         history = await asyncio.to_thread(load_session_history, user["id"])
         return {"sessions": history[:limit]}
+
+    def _export_csv_sync(session, user_id: int) -> str:
+        rows = [
+            {
+                "timestamp": t.timestamp.isoformat(),
+                "account_mode": session.settings.account_mode,
+                "asset": t.asset,
+                "direction": t.direction,
+                "amount": t.amount,
+                "martingale_step": t.martingale_step,
+                "result": t.result,
+                "payout_pct": t.payout_pct,
+                "profit": t.profit,
+            }
+            for t in session.risk_manager.trade_history
+        ]
+        for sess in load_session_history(user_id):
+            for t in sess.get("trades", []):
+                rows.append({
+                    "timestamp": t["timestamp"],
+                    "account_mode": sess.get("account_mode", ""),
+                    "asset": t["asset"],
+                    "direction": t["direction"],
+                    "amount": t["amount"],
+                    "martingale_step": t["martingale_step"],
+                    "result": t["result"],
+                    "payout_pct": t["payout_pct"],
+                    "profit": t["profit"],
+                })
+        rows.sort(key=lambda r: r["timestamp"], reverse=True)
+
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(["Timestamp", "Account", "Asset", "Direction", "Amount", "Martingale Step", "Result", "Payout %", "Profit"])
+        for r in rows:
+            writer.writerow([
+                r["timestamp"], r["account_mode"], r["asset"], r["direction"],
+                r["amount"], r["martingale_step"], r["result"], r["payout_pct"], r["profit"],
+            ])
+        return buf.getvalue()
+
+    @app.get("/api/history/export.csv")
+    async def export_history_csv(user=Depends(require_user)):
+        """Full trade history (current live session + every archived
+        session) as a downloadable CSV. Opened via Telegram's openLink()
+        into the system browser rather than fetched in-app — a blob-based
+        client-side download doesn't reliably trigger inside Telegram's own
+        WebView, but a plain GET with Content-Disposition: attachment does
+        in a real browser. That's also why auth here can come from the
+        init_data query param (see require_user) instead of only the
+        header: openLink() can't attach custom headers."""
+        session = manager.get_or_create(user["id"])
+        csv_text = await asyncio.to_thread(_export_csv_sync, session, user["id"])
+        filename = f"trade-history-{datetime.now(timezone.utc).date().isoformat()}.csv"
+        return Response(
+            content=csv_text,
+            media_type="text/csv",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
 
     def _insights_sync() -> dict:
         all_trades = []
