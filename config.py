@@ -9,6 +9,8 @@ Nothing secret lives in this file itself; `.env` is gitignored.
 See `.env.example` for the full list of variables and what each does.
 """
 
+import json
+import logging
 import os
 
 from dotenv import load_dotenv
@@ -107,6 +109,42 @@ MAX_CONCURRENT_CONNECTS = int(os.environ.get("MAX_CONCURRENT_CONNECTS", "5"))
 # Random 0..N second delay added before each connect attempt, so a burst of
 # users starting at the same moment doesn't hit PocketOption in one spike.
 CONNECT_JITTER_MAX_SECONDS = float(os.environ.get("CONNECT_JITTER_MAX_SECONDS", "4.0"))
+
+# ============================================================================
+# DEMO CONNECTIVITY RELAYS
+# ============================================================================
+# PocketOption's demo server (185.104.208.0/24) has been unreachable from
+# this VPS's own network (Contabo) since day one — confirmed by direct,
+# repeated testing, not assumed. Real-money trading is unaffected; it
+# connects directly, no relay needed. DEMO_RELAYS lists WireGuard relay
+# servers — each on a genuinely different network/provider, so a problem
+# on one doesn't take out the rest — that carry ONLY the demo subnet's
+# traffic. Every other request (Mongo, Telegram, real-money trading)
+# still goes direct, unaffected by any of this.
+#
+# The first entry is used today. session_manager.py's connect-retry loop
+# picks which entry to use on each retry (see relay_index there) — with
+# one entry that's a no-op (always the same relay); once a second entry
+# exists here AND its WireGuard tunnel is set up on this VPS, retries
+# start actually rotating between them. Adding a relay later is meant to
+# be just: bring up its WireGuard tunnel (same steps as the current one),
+# add its {name, endpoint, public_key} object below — no other code
+# changes required.
+#
+# Example:
+#   DEMO_RELAYS=[{"name":"interserver-lax","endpoint":"153.75.235.168:51820","public_key":"8ji+M87BL5/1ie0b4qAEqYkAThV4nS9SWsW2e6InfXQ="}]
+def _demo_relays_env() -> list:
+    raw = os.environ.get("DEMO_RELAYS", "[]")
+    try:
+        relays = json.loads(raw)
+        if isinstance(relays, list):
+            return relays
+    except json.JSONDecodeError:
+        logging.getLogger(__name__).error(f"DEMO_RELAYS is not valid JSON, ignoring it: {raw[:200]}")
+    return []
+
+
+DEMO_RELAYS = _demo_relays_env()
 
 # ============================================================================
 # LOGGING

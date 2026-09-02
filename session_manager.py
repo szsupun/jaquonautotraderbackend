@@ -45,6 +45,7 @@ from config import (
 from candle_timing import seconds_until_next_candle
 from connect_limit_store import check_and_record_session_start
 from error_messages import humanize_error
+from relay_control import activate_demo_relay, select_demo_relay
 from risk_manager import RiskManager
 from session_history_store import append_session
 from settings import TradingSettings
@@ -330,6 +331,10 @@ class SessionManager:
                             break
                         session.connect_attempt = consecutive_connect_failures + 1
                         session.connect_max_attempts = MAX_CONNECT_RETRIES
+                        if settings.account_mode == "DEMO":
+                            relay = select_demo_relay(consecutive_connect_failures)
+                            if relay:
+                                activate_demo_relay(relay)
                         # consecutive_stale_balance/consecutive_connect_failures
                         # double as the region rotation index — 0 on a fresh
                         # Start, incrementing on each retry, so a retry
