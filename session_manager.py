@@ -332,7 +332,7 @@ class SessionManager:
                         session.connect_attempt = consecutive_connect_failures + 1
                         session.connect_max_attempts = MAX_CONNECT_RETRIES
                         if settings.account_mode == "DEMO":
-                            relay = select_demo_relay(consecutive_connect_failures)
+                            relay = select_demo_relay(consecutive_connect_failures, MAX_CONNECT_RETRIES)
                             if relay:
                                 activate_demo_relay(relay)
                         # consecutive_stale_balance/consecutive_connect_failures
