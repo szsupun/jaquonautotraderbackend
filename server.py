@@ -186,6 +186,8 @@ def create_app(manager: SessionManager) -> FastAPI:
             "trading_active": session.trading_active,
             "connecting": session.connecting,
             "connect_eta": session.connect_eta.isoformat() if session.connect_eta else None,
+            "connect_attempt": session.connect_attempt,
+            "connect_max_attempts": session.connect_max_attempts,
             "connected": session.trader.is_connected,
             "account_mode": session.settings.account_mode,
             "asset": session.settings.get_display_asset(),

@@ -55,6 +55,12 @@ from user_store import load_user_settings, save_user_settings
 logger = logging.getLogger(__name__)
 
 MAX_CONSECUTIVE_ERRORS = 10
+# How many times a fresh Start auto-retries a failed connect before giving
+# up and stopping the session. Previously a single failed connect (e.g. a
+# PocketOption-side hiccup) stopped the whole session immediately, forcing
+# the customer to notice and press Start again by hand — this gives a
+# transient blip a few automatic chances to clear on its own first.
+MAX_CONNECT_RETRIES = 3
 
 
 @dataclass
@@ -66,6 +72,10 @@ class UserSession:
     trading_active: bool = False
     connecting: bool = False  # True only while a connect() call is in flight
     connect_eta: Optional[datetime] = None  # estimated finish time of the current connect
+    # Which automatic retry this is (1-indexed) and the cap, so the Mini
+    # App can show "Attempt 2 of 3" instead of looking stuck on a retry.
+    connect_attempt: int = 0
+    connect_max_attempts: int = 0
     next_trade_at: Optional[datetime] = None  # for the frontend's live countdown
     task: Optional[asyncio.Task] = None
     last_error: Optional[str] = None
@@ -302,6 +312,7 @@ class SessionManager:
         risk_manager = session.risk_manager
         consecutive_errors = 0
         consecutive_stale_balance = 0
+        consecutive_connect_failures = 0
 
         try:
             while session.trading_active:
@@ -317,20 +328,36 @@ class SessionManager:
                             session.trading_active = False
                             self._tlog(session, "No SSID configured for this mode — stopped", "error")
                             break
-                        # consecutive_stale_balance doubles as the region
-                        # rotation index — 0 on a fresh Start, incrementing
-                        # each time a stale connection forces a reconnect
-                        # within this same session, so a retry actually
-                        # tries a different server instead of the same one.
+                        session.connect_attempt = consecutive_connect_failures + 1
+                        session.connect_max_attempts = MAX_CONNECT_RETRIES
+                        # consecutive_stale_balance/consecutive_connect_failures
+                        # double as the region rotation index — 0 on a fresh
+                        # Start, incrementing on each retry, so a retry
+                        # actually tries a different server instead of the
+                        # same one (real accounts only — see trader.connect()).
                         ok, connect_reason = await self._connect(
-                            session, ssid, region_hint=consecutive_stale_balance
+                            session, ssid, region_hint=consecutive_stale_balance + consecutive_connect_failures
                         )
                         if not ok:
+                            consecutive_connect_failures += 1
                             session.last_error = connect_reason
-                            session.trading_active = False
-                            self._tlog(session, f"Stopped: {connect_reason}", "error")
-                            await self._dm(user_id, f"⏹️ Trading stopped: {connect_reason}")
-                            break
+                            if consecutive_connect_failures >= MAX_CONNECT_RETRIES:
+                                session.trading_active = False
+                                self._tlog(session, f"Stopped: {connect_reason}", "error")
+                                await self._dm(user_id, f"⏹️ Trading stopped: {connect_reason}")
+                                break
+                            wait = min(15 * consecutive_connect_failures, 45)
+                            self._tlog(
+                                session,
+                                f"{connect_reason} — retrying automatically "
+                                f"({consecutive_connect_failures}/{MAX_CONNECT_RETRIES}) in {wait:.0f}s…",
+                                "warn",
+                            )
+                            await asyncio.sleep(wait)
+                            continue
+                        consecutive_connect_failures = 0
+                        session.connect_attempt = 0
+                        session.connect_max_attempts = 0
                         session.last_error = None
                         session.last_error_detail = None
 
