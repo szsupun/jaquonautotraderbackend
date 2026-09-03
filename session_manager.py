@@ -343,7 +343,14 @@ class SessionManager:
                         if settings.account_mode == "DEMO":
                             relay = select_demo_relay(consecutive_connect_failures, MAX_CONNECT_RETRIES)
                             if relay:
-                                activate_demo_relay(relay)
+                                # activate_demo_relay() shells out (ip route
+                                # replace) — a blocking call would freeze the
+                                # whole single-threaded event loop, and with
+                                # it every other user's requests, for however
+                                # long that takes. to_thread keeps it off
+                                # the loop the same way every other blocking
+                                # call in this codebase already is.
+                                await asyncio.to_thread(activate_demo_relay, relay)
                         # consecutive_stale_balance/consecutive_connect_failures
                         # double as the region rotation index — 0 on a fresh
                         # Start, incrementing on each retry, so a retry
