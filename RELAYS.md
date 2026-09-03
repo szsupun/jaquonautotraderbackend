@@ -16,28 +16,33 @@ to 0/3 successes within about 20 minutes of testing. Treat any single test
 (good or bad) as a snapshot, not a verdict — that's why relays are verified
 with multiple repeated tests, not one.
 
-## Current setup (as of 2026-09-02)
+## Current setup (as of 2026-09-03)
 
-Two relays, both WireGuard tunnels from the primary VPS, each carrying
+Three relays, all WireGuard tunnels from the primary VPS, each carrying
 *only* `185.104.208.0/24` — nothing else (Mongo, Telegram, real-money
 trading) touches them:
 
-| Priority | Name | Box | Interface | Role |
-|---|---|---|---|---|
-| 1 (primary) | `interserver-lax` | InterServer VPS, LA | `wg0` | Used on every normal attempt |
-| 2 (last resort) | `contabo-relay` | Contabo VPS (169.58.195.60) | `wg1` | Only the *final* retry attempt before giving up |
+| Name | Box | Interface | Location |
+|---|---|---|---|
+| `interserver-lax` | InterServer VPS (153.75.235.168) | `wg0` | LA, US |
+| `contabo-relay` | Contabo VPS (169.58.195.60) | `wg1` | France |
+| `spaceship-us` | Spaceship VPS (203.161.39.156) | `wg2` | US (SSH on port 22022, not 22) |
 
 Configured via `DEMO_RELAYS` in `.env` (JSON list — see the comment above
 `DEMO_RELAYS` in `config.py` for the exact format). Selection logic lives in
 `relay_control.py`; it's called from the connect-retry loop in
 `session_manager.py`.
 
-**Why last-resort, not round-robin:** with only 3 retry attempts total, a
-relay with a real chance of failing (like Contabo, per the finding above)
-should never eat one of the two "real" attempts on a healthy primary — it
-would just waste ~90s on a coin-flip when the primary was probably fine.
-Reaching for it only on the last attempt means it's pure upside: it can
-only rescue a session that would've failed anyway.
+**Selection is round-robin across all configured relays, one per retry
+attempt** (attempt 1 → relay[0], attempt 2 → relay[1], attempt 3 →
+relay[2], wrapping if there are more attempts than relays). This used to
+be priority-based (a "reliable primary" got every attempt except the
+last) — that assumption stopped holding once real testing showed every
+relay tried so far has independent good and bad stretches; at one point
+both InterServer and Contabo were down in the same moment while
+Spaceship worked fine (see the 2026-09-03 log below). With no relay
+provably better than the others, trying a different one each attempt
+maximizes the odds that at least one is healthy within the retry budget.
 
 **Why two WireGuard interfaces instead of reconfiguring one:** both tunnels
 stay up permanently (`Table = off` in each wg-quick config, so neither
@@ -119,10 +124,13 @@ looks correlated across unrelated users.
 
 5. **Add it to `DEMO_RELAYS`** in `/root/jaquonautotrader/.env` — append a
    `{"name", "endpoint", "public_key", "interface"}` object to the JSON
-   list (position in the list = priority; only the *last* one is used as
-   last-resort, so a 3rd relay would currently need `relay_control.py`'s
-   logic extended if you want a "try relay 2, then relay 3" chain rather
-   than jumping straight past relay 2).
+   list. Selection round-robins across every entry (see above) — nothing
+   else needs to change in code to pick it up.
+
+**Watch for non-default SSH ports.** Some providers (Spaceship, at least)
+don't use port 22 — check the provider's dashboard/welcome email for the
+actual port before assuming a connection timeout means the box isn't
+ready yet.
 
 6. **Restart and verify end-to-end** — `systemctl restart jaquonautotrader`,
    check `journalctl -u jaquonautotrader` for a clean start, then a real
@@ -135,6 +143,15 @@ looks correlated across unrelated users.
 > backend repo."
 
 That's enough — this file has the rest.
+
+## Real-world validation (2026-09-03)
+
+Within minutes of wiring up the third relay (`spaceship-us`), a live Start
+attempt hit exactly the scenario this whole setup exists for: attempt 1
+(InterServer) timed out, attempt 2 (Contabo) timed out, attempt 3
+(Spaceship) connected cleanly with a real balance. Not a drill — both of
+the first two relays were genuinely down at that moment. This is the
+reason round-robin beats betting on one "preferred" relay.
 
 ## Lesson learned (2026-09-02)
 

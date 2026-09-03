@@ -5,25 +5,21 @@ is unreachable directly from this VPS).
 
 Split into two pieces on purpose:
   - select_demo_relay(): pure selection logic, fully correct and testable
-    today even with only one relay configured.
+    regardless of how many relays are configured.
   - activate_demo_relay(): the actual network-level switch (which
-    WireGuard tunnel carries 185.104.208.0/24 right now). With a single
-    relay there is nothing to switch between, so this is correctly a
-    no-op — that tunnel is already the only route. Implementing the real
-    multi-relay switch (bringing up a second WireGuard interface and
-    flipping the active route between them) is deferred until a second
-    relay actually exists: it needs a real second tunnel to build and
-    verify against, the same way the first relay was verified tonight
-    rather than assumed to work.
+    WireGuard tunnel carries 185.104.208.0/24 right now).
 
-Selection is priority-based, not round-robin: DEMO_RELAYS[0] (the relay
-that's actually been verified reliable — see config.py) gets every
-attempt except the very last one in a retry sequence, which falls back
-to DEMO_RELAYS[1] if a second relay exists. That second relay is meant
-for entries with a real but lower success rate (per the operator's own
-long-run experience, not a proven-broken one) — a genuine last resort
-tried only once the primary has already failed the rest of the
-sequence, never touched at all while the primary is healthy.
+Selection is round-robin, not priority-based. Earlier this only had two
+relays and picked a "reliable primary" every time except the very last
+attempt. That assumption stopped holding: real testing on 2026-09-02/03
+showed every relay tried so far (InterServer, a Contabo box, a Spaceship
+box) has independent good and bad stretches — at one point both of the
+first two relays were down at the same moment while the third worked
+fine. With no relay provably better than the others, trying a different
+one on each attempt maximizes the chance that at least one of them is
+healthy within the retry budget, rather than betting the first two
+attempts on a single "preferred" option that might be having a bad
+moment right when it's needed.
 """
 
 from __future__ import annotations
@@ -43,16 +39,13 @@ _active_interface: Optional[str] = None
 def select_demo_relay(attempt_index: int, max_attempts: int) -> Optional[dict]:
     """attempt_index: 0 on the first connect attempt of a retry sequence,
     incrementing on each automatic retry (see consecutive_connect_failures
-    in session_manager.py). max_attempts: the retry sequence's cap (see
-    MAX_CONNECT_RETRIES in session_manager.py) — only the last attempt in
-    the sequence reaches for a backup relay. Returns the relay dict to
+    in session_manager.py). max_attempts: unused now (kept in the
+    signature so callers don't need to change) — every attempt just
+    round-robins to the next configured relay. Returns the relay dict to
     use, or None if no relay is configured at all."""
     if not DEMO_RELAYS:
         return None
-    is_last_attempt = attempt_index >= max_attempts - 1
-    if is_last_attempt and len(DEMO_RELAYS) > 1:
-        return DEMO_RELAYS[1]
-    return DEMO_RELAYS[0]
+    return DEMO_RELAYS[attempt_index % len(DEMO_RELAYS)]
 
 
 def activate_demo_relay(relay: dict) -> None:
