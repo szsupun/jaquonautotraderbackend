@@ -56,6 +56,14 @@ from user_store import load_user_settings, save_user_settings
 logger = logging.getLogger(__name__)
 
 MAX_CONSECUTIVE_ERRORS = 10
+# "Invalid asset" (PocketOption: "Asset is not active") is deterministic,
+# not transient network flakiness — if the configured asset is closed right
+# now, the next attempt will fail the same way too. It used to never count
+# toward any stop condition at all, so a session could retry the same
+# doomed trade forever, DMing the customer "Error" every single cycle
+# indefinitely. A much lower, faster threshold than MAX_CONSECUTIVE_ERRORS
+# stops it quickly with a message that actually says what to do about it.
+MAX_CONSECUTIVE_INVALID_ASSET = 3
 # How many times a fresh Start auto-retries a failed connect before giving
 # up and stopping the session. Previously a single failed connect (e.g. a
 # PocketOption-side hiccup) stopped the whole session immediately, forcing
@@ -314,6 +322,7 @@ class SessionManager:
         consecutive_errors = 0
         consecutive_stale_balance = 0
         consecutive_connect_failures = 0
+        consecutive_invalid_asset = 0
 
         try:
             while session.trading_active:
@@ -540,6 +549,9 @@ class SessionManager:
                     session.live_step_pnl = 0.0
 
                     consecutive_errors = 0 if result != "error" else consecutive_errors + 1
+                    consecutive_invalid_asset = (
+                        consecutive_invalid_asset + 1 if result == "invalid_asset" else 0
+                    )
 
                     labels = {"win": "WIN ✅", "loss": "LOSS ✖️", "doji": "DOJI ⚖️"}
                     label = labels.get(result, "⚠️ Error")
@@ -550,13 +562,31 @@ class SessionManager:
                         f"session ${risk_manager.session_profit:+.2f}",
                         tlog_level,
                     )
-                    profit_emoji = "🟢" if risk_manager.session_profit >= 0 else "🔴"
-                    await self._dm(
-                        user_id,
-                        f"{label} (step {final_step})\n"
-                        f"{profit_emoji} Session: ${risk_manager.session_profit:+.2f} "
-                        f"| WR {risk_manager.get_win_rate():.0f}%",
-                    )
+
+                    if consecutive_invalid_asset >= MAX_CONSECUTIVE_INVALID_ASSET:
+                        reason = (
+                            f"{settings.get_display_asset()} isn't tradeable right now — "
+                            f"pick a different asset in Settings and press Start again."
+                        )
+                        session.last_error = reason
+                        session.trading_active = False
+                        self._tlog(session, f"Stopped: {reason}", "error")
+                        await self._dm(user_id, f"⏹️ Trading stopped: {reason}")
+                        break
+
+                    # Every other result DMs every cycle — invalid_asset would
+                    # otherwise DM "Error" on a fixed interval (trade_interval,
+                    # here 15s) for however long it takes to hit the stop
+                    # above; the tlog entry already covers it in the
+                    # Terminal tab without spamming the customer's DMs too.
+                    if result != "invalid_asset":
+                        profit_emoji = "🟢" if risk_manager.session_profit >= 0 else "🔴"
+                        await self._dm(
+                            user_id,
+                            f"{label} (step {final_step})\n"
+                            f"{profit_emoji} Session: ${risk_manager.session_profit:+.2f} "
+                            f"| WR {risk_manager.get_win_rate():.0f}%",
+                        )
 
                     elapsed = (datetime.now(timezone.utc) - cycle_start).total_seconds()
                     wait = max(5.0, settings.trade_interval - elapsed)
