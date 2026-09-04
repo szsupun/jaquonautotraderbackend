@@ -124,6 +124,11 @@ class PermissionUpdate(BaseModel):
     paid: Optional[bool] = None
 
 
+class PaymentUpdate(BaseModel):
+    amount: float
+    paid: bool
+
+
 class BroadcastRequest(BaseModel):
     message: str
 
@@ -691,6 +696,16 @@ def create_app(manager: SessionManager) -> FastAPI:
             if session.trading_active and session.settings.account_mode == mode.upper():
                 manager.stop_trading(target_user_id)
         return status
+
+    @app.post("/api/admin/users/{target_user_id}/payment")
+    async def admin_set_payment(
+        target_user_id: int, body: PaymentUpdate, admin=Depends(require_admin)
+    ):
+        """Standalone payment edit — independent of granting/revoking
+        access, so an admin can correct or update a payment record (e.g.
+        this week's settlement finally came in) without also having to
+        touch that user's trading access."""
+        return await asyncio.to_thread(set_payment, target_user_id, body.amount, body.paid, admin["id"])
 
     def _admin_subscriptions_sync() -> dict:
         """Dedicated view of trading access grants — both the real-money
