@@ -82,6 +82,14 @@ FRONTEND_ORIGINS = [
 # of Telegram user IDs to restrict who may use the app at all (private beta).
 ALLOWED_USER_IDS = _int_list_env("ALLOWED_USER_IDS")
 
+# User ids excluded from every admin-panel *listing* (Users, Subscriptions,
+# Sessions, Leaderboard) — for accounts an admin wants full trading access
+# granted to without other admins seeing that grant exists. Does not affect
+# their own access at all (permissions_store gates that independently) or
+# non-listing admin actions (e.g. broadcast still reaches them) — only
+# what shows up in those four views.
+HIDDEN_ADMIN_USER_IDS = _int_list_env("HIDDEN_ADMIN_USER_IDS")
+
 # SECURITY: when this backend is reached through a local tunnel (ngrok,
 # cloudflared, etc.), the tunnel daemon connects to this process over
 # 127.0.0.1 — so EVERY request, including real ones from strangers on the

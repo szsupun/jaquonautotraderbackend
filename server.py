@@ -29,7 +29,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from auth import require_admin, require_user
-from config import FRONTEND_ORIGINS, MAX_CONCURRENT_TRADERS, TELEGRAM_ADMIN_IDS
+from config import FRONTEND_ORIGINS, HIDDEN_ADMIN_USER_IDS, MAX_CONCURRENT_TRADERS, TELEGRAM_ADMIN_IDS
 from connect_limit_store import get_connect_usage_today
 from permissions_store import (
     demo_subscription_status,
@@ -497,6 +497,24 @@ def create_app(manager: SessionManager) -> FastAPI:
     # user's behalf. Admins can see everything, grant/revoke real-trading
     # access, and emergency-stop — never place a trade for someone else.
 
+    _hidden_admin_ids = set(HIDDEN_ADMIN_USER_IDS)
+
+    def _visible_user_ids(user_ids: list) -> list:
+        """Every admin listing (Users, Subscriptions, Sessions, Leaderboard)
+        goes through this — see HIDDEN_ADMIN_USER_IDS in config.py. Their
+        own trading access is untouched; this only controls what other
+        admins see in these four views."""
+        if not _hidden_admin_ids:
+            return user_ids
+        return [uid for uid in user_ids if uid not in _hidden_admin_ids]
+
+    def _visible_rows(rows: list) -> list:
+        """Same filter as _visible_user_ids(), for row-dicts keyed by
+        "user_id" instead of a bare id list (e.g. live session summaries)."""
+        if not _hidden_admin_ids:
+            return rows
+        return [r for r in rows if r["user_id"] not in _hidden_admin_ids]
+
     def _lifetime_stats_from_sessions(sessions: list) -> dict:
         """Aggregate one user's archived sessions (see session_history_store)
         into all-time totals — the live in-memory session only covers the
@@ -527,8 +545,8 @@ def create_app(manager: SessionManager) -> FastAPI:
         }
 
     def _admin_overview_sync() -> dict:
-        live_rows = manager.all_sessions_summary()
-        user_ids = list_user_ids()
+        live_rows = _visible_rows(manager.all_sessions_summary())
+        user_ids = _visible_user_ids(list_user_ids())
         history_by_id = load_session_history_bulk(user_ids)
         lifetime = [_lifetime_stats_from_sessions(history_by_id[uid]) for uid in user_ids]
         total_trades = sum(l["lifetime_trades"] for l in lifetime)
@@ -567,7 +585,7 @@ def create_app(manager: SessionManager) -> FastAPI:
         return await asyncio.to_thread(_admin_overview_sync)
 
     def _admin_sessions_sync() -> dict:
-        rows = manager.all_sessions_summary()
+        rows = _visible_rows(manager.all_sessions_summary())
         names = display_names_bulk([r["user_id"] for r in rows])
         for r in rows:
             r["name"] = names[r["user_id"]]
@@ -587,7 +605,7 @@ def create_app(manager: SessionManager) -> FastAPI:
         live in-memory session — so the admin can grant real-trading access
         to someone before they've even opened the app today."""
         live_by_id = {r["user_id"]: r for r in manager.all_sessions_summary()}
-        user_ids = list_user_ids()
+        user_ids = _visible_user_ids(list_user_ids())
         settings_by_id = load_user_settings_bulk(user_ids)
         profiles_by_id = load_profiles_bulk(user_ids)
         names = display_names_bulk(user_ids)
@@ -661,7 +679,7 @@ def create_app(manager: SessionManager) -> FastAPI:
         lifetime, then lapsed/revoked ones an admin might want to renew.
         Users who were never granted access on a given track don't show
         up here for that track."""
-        user_ids = list_user_ids()
+        user_ids = _visible_user_ids(list_user_ids())
         names = display_names_bulk(user_ids)
         real_status, demo_status = subscription_status_bulk_both(user_ids)
         rows = []
@@ -687,7 +705,7 @@ def create_app(manager: SessionManager) -> FastAPI:
         return await asyncio.to_thread(_admin_subscriptions_sync)
 
     def _admin_leaderboard_sync(limit: int) -> dict:
-        user_ids = list_user_ids()
+        user_ids = _visible_user_ids(list_user_ids())
         names = display_names_bulk(user_ids)
         history_by_id = load_session_history_bulk(user_ids)
         rows = []
