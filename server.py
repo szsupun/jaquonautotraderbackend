@@ -566,7 +566,10 @@ def create_app(manager: SessionManager) -> FastAPI:
         real_status, demo_status = subscription_status_bulk_both(user_ids)
         real_enabled = sum(1 for s in real_status.values() if s["active"])
         demo_enabled = sum(1 for s in demo_status.values() if s["active"])
-        payments = payment_totals(user_ids)
+        # Only users with currently-active access owe anything — everyone
+        # else was never sold a grant to collect payment for.
+        paying_ids = [uid for uid in user_ids if real_status[uid]["active"] or demo_status[uid]["active"]]
+        payments = payment_totals(paying_ids)
 
         return {
             "active_traders": manager.active_count(),

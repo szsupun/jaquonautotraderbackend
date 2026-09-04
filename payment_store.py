@@ -68,15 +68,21 @@ def set_payment(user_id: int, amount: float, paid: bool, admin_id: int) -> dict:
 
 def payment_totals(user_ids: List[int]) -> dict:
     """Aggregate for the admin overview: how much has actually come in vs.
-    how much is sitting with the partner waiting on the weekly settlement."""
+    how much is sitting with the partner waiting on the weekly settlement.
+
+    `user_ids` should be users with currently-active real or demo access —
+    everyone else has nothing to collect on. A user with NO payment record
+    at all counts as not-paid, same as one explicitly marked paid=False —
+    the default assumption is money is owed until someone marks it
+    received, not "unknown, so don't count it." Silently excluding
+    never-recorded users would understate what's actually outstanding,
+    which defeats the point of tracking it."""
     payments = load_payments_bulk(user_ids)
     total_paid = 0.0
     pending_amount = 0.0
     not_paid_count = 0
     for uid in user_ids:
         p = payments[uid]
-        if p["amount"] <= 0 and p["updated_at"] is None:
-            continue  # never recorded — not part of either bucket
         if p["paid"]:
             total_paid += p["amount"]
         else:
