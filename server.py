@@ -134,7 +134,7 @@ def create_app(manager: SessionManager) -> FastAPI:
         allow_origins=FRONTEND_ORIGINS,
         allow_credentials=False,
         allow_methods=["GET", "POST"],
-        allow_headers=["Content-Type", "X-Telegram-Init-Data"],
+        allow_headers=["Content-Type", "X-Telegram-Init-Data", "X-Admin-Token"],
     )
 
     @app.middleware("http")
