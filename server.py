@@ -44,6 +44,7 @@ from permissions_store import (
     subscription_status_bulk_both,
 )
 from insights import compute_insights
+from payment_store import load_payments_bulk, payment_totals, set_payment
 from profile_store import display_names_bulk, load_profiles_bulk
 from session_history_store import load_session_history, load_session_history_bulk
 from session_manager import SessionManager
@@ -116,6 +117,11 @@ class PermissionUpdate(BaseModel):
     # Required when trading_enabled is true: "monthly" (auto-expires in
     # 30 days) or "lifetime" (never expires). Ignored when revoking access.
     subscription_type: Optional[str] = None
+    # Optional payment info recorded alongside a grant (ignored on revoke) —
+    # see payment_store.py. Both omitted leaves any existing payment record
+    # untouched rather than resetting it to $0/unpaid.
+    payment_amount: Optional[float] = None
+    paid: Optional[bool] = None
 
 
 class BroadcastRequest(BaseModel):
@@ -555,6 +561,7 @@ def create_app(manager: SessionManager) -> FastAPI:
         real_status, demo_status = subscription_status_bulk_both(user_ids)
         real_enabled = sum(1 for s in real_status.values() if s["active"])
         demo_enabled = sum(1 for s in demo_status.values() if s["active"])
+        payments = payment_totals(user_ids)
 
         return {
             "active_traders": manager.active_count(),
@@ -568,6 +575,9 @@ def create_app(manager: SessionManager) -> FastAPI:
             "lifetime_trades": total_trades,
             "lifetime_profit": round(sum(l["lifetime_profit"] for l in lifetime), 2),
             "lifetime_win_rate": round(total_wins / (total_wins + total_losses) * 100, 1) if (total_wins + total_losses) else 0.0,
+            "total_paid": payments["total_paid"],
+            "pending_amount": payments["pending_amount"],
+            "not_paid_count": payments["not_paid_count"],
         }
 
     # Every /api/admin/* handler below is pure synchronous logic — several
@@ -611,6 +621,7 @@ def create_app(manager: SessionManager) -> FastAPI:
         names = display_names_bulk(user_ids)
         real_status, demo_status = subscription_status_bulk_both(user_ids)
         history_by_id = load_session_history_bulk(user_ids)
+        payments_by_id = load_payments_bulk(user_ids)
         rows = []
         for uid in user_ids:
             settings = settings_by_id[uid]
@@ -625,6 +636,7 @@ def create_app(manager: SessionManager) -> FastAPI:
                 "subscription": real_status[uid],
                 "demo_subscription": demo_status[uid],
                 "live": live_by_id.get(uid),
+                "payment": payments_by_id[uid],
                 **_lifetime_stats_from_sessions(history_by_id[uid]),
             })
         rows.sort(key=lambda r: (not (r["live"] and r["live"]["trading_active"]), -r["lifetime_profit"]))
@@ -653,6 +665,13 @@ def create_app(manager: SessionManager) -> FastAPI:
             if body.subscription_type not in ("monthly", "lifetime"):
                 raise HTTPException(400, "subscription_type must be 'monthly' or 'lifetime'")
             grant_fn(target_user_id, body.subscription_type, admin_id)
+            if body.payment_amount is not None or body.paid is not None:
+                set_payment(
+                    target_user_id,
+                    body.payment_amount if body.payment_amount is not None else 0.0,
+                    bool(body.paid),
+                    admin_id,
+                )
         else:
             revoke_fn(target_user_id, admin_id)
         return status_fn(target_user_id), mode
